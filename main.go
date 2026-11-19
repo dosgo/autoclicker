@@ -320,6 +320,8 @@ func setStatus(f func(*Status)) {
 
 // ---------- 执行引擎 ----------
 
+const mouseMoveTolerance = 8
+
 func sleepInterruptible(d time.Duration) bool {
 	select {
 	case <-stopCh:
@@ -352,10 +354,22 @@ func runTask(task Task) {
 				x += rand.IntN(2*st.Offset+1) - st.Offset
 				y += rand.IntN(2*st.Offset+1) - st.Offset
 			}
-			setStatus(func(s *Status) { s.StepNow = i + 1 })
+			setStatus(func(s *Status) { s.StepNow = i + 1; s.Message = "运行中" })
 			setCursor(x, y)
-			time.Sleep(60 * time.Millisecond) // 给系统反应时间
-			doClick(st.Click)
+			// 给系统 40~100ms 的随机反应时间，期间仍可通过停止按钮中断。
+			delay := time.Duration(40+rand.IntN(61)) * time.Millisecond
+			if !sleepInterruptible(delay) {
+				return
+			}
+
+			// 如果等待期间鼠标被人工移开，只跳过本次点击，任务继续。
+			actualX, actualY := getCursor()
+			if actualX < x-mouseMoveTolerance || actualX > x+mouseMoveTolerance ||
+				actualY < y-mouseMoveTolerance || actualY > y+mouseMoveTolerance {
+				setStatus(func(s *Status) { s.Message = fmt.Sprintf("第 %d 步检测到鼠标移动，已跳过点击", i+1) })
+			} else {
+				doClick(st.Click)
+			}
 
 			if st.PauseMs > 0 && !sleepInterruptible(time.Duration(st.PauseMs) * time.Millisecond) {
 				return
