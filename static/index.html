@@ -73,7 +73,6 @@
 
 <script>
 let tasks = [];
-let pickTarget = null; // 正在拾取坐标的 {taskId, stepIdx 或 null 表示新步骤}
 
 async function api(path, opts) {
   try {
@@ -151,33 +150,6 @@ function updStep(id, i, field, value) {
     s[field] = field === 'click' ? value : (parseInt(value) || 0);
   }
   save();
-}
-
-// ---------- 拾取坐标 ----------
-function pickCoord(taskId, stepIdx, nx, ny) {
-  if (pickTarget) return alert('已经在拾取中了');
-  pickTarget = { taskId, stepIdx, nx, ny, deadline: Date.now() + 3000 };
-  const el = document.getElementById(nx);
-  el.classList.add('picking');
-  el.placeholder = '拾取中...';
-  const timer = setInterval(async () => {
-    const left = Math.ceil((pickTarget.deadline - Date.now()) / 1000);
-    if (left > 0) { el.placeholder = `${left} 秒后拾取，请把鼠标移到目标位置`; return; }
-    clearInterval(timer);
-    const pos = await api('/api/curpos');
-    if (!pickTarget) return;
-    const t = pickTarget; pickTarget = null;
-    el.classList.remove('picking');
-    el.placeholder = '';
-    if (t.stepIdx !== null && t.stepIdx !== undefined) {
-      tasks.find(x => x.id === t.taskId).steps[t.stepIdx].x = pos.x;
-      tasks.find(x => x.id === t.taskId).steps[t.stepIdx].y = pos.y;
-      save().then(render);
-    } else {
-      document.getElementById(t.nx).value = pos.x;
-      document.getElementById(t.ny).value = pos.y;
-    }
-  }, 200);
 }
 
 // ---------- F8 捕获 / 实时坐标 ----------
@@ -270,7 +242,6 @@ function render() {
             </select></td>
             <td><input type="number" min="0" step="0.1" value="${s.pauseMs / 1000}" onchange="updStep('${t.id}',${i},'pauseMs',this.value)"></td>
             <td class="actions">
-              <button class="small" onclick="pickCoord('${t.id}',${i},'','')" title="3秒后自动抓取鼠标位置">📍拾取</button>
               <button class="small" onclick="fillCap('${t.id}',${i},'','')" title="填入 F8 捕获的坐标">📥 F8</button>
               <button class="small" onclick="moveStep('${t.id}',${i},-1)">↑</button>
               <button class="small" onclick="moveStep('${t.id}',${i},1)">↓</button>
@@ -282,7 +253,6 @@ function render() {
         <b>添加步骤：</b>
         <label>X</label><input id="nx-${t.id}" type="number" placeholder="0">
         <label>Y</label><input id="ny-${t.id}" type="number" placeholder="0">
-        <button class="small" onclick="pickCoord('${t.id}',null,'nx-${t.id}','ny-${t.id}')">📍拾取坐标(3秒)</button>
         <button class="small" onclick="fillCap('${t.id}',null,'nx-${t.id}','ny-${t.id}')" title="填入 F8 捕获的坐标">📥 填入F8捕获</button>
         <label>偏移±</label><input id="noff-${t.id}" type="number" value="0">
         <select id="nclick-${t.id}">${Object.entries(clickName).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
