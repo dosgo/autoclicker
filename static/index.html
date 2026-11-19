@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>自动点击器</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #1a2233; --panel2: #212b40; --border: #2d3a55;
+    --text: #e6ecf5; --muted: #8a97b0; --accent: #4f8cff; --green: #34c77b; --red: #ff5d5d; --orange: #ffb347;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: "Microsoft YaHei", system-ui, sans-serif; font-size: 14px; padding: 20px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--muted); margin-bottom: 16px; }
+  .sub b { color: var(--orange); }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 7px 14px; cursor: pointer; font-size: 14px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: var(--red); border-color: var(--red); color: #fff; }
+  button.small { padding: 3px 9px; font-size: 12px; }
+  input, select { background: var(--panel2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 6px 9px; font-size: 14px; }
+  input { width: 90px; }
+  input.wide { width: 180px; }
+  label { color: var(--muted); margin-right: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; }
+  th { color: var(--muted); font-weight: normal; font-size: 12px; }
+  .task-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .task-head .name { font-size: 16px; font-weight: bold; }
+  .tag { font-size: 12px; color: var(--muted); background: var(--panel2); border-radius: 4px; padding: 2px 8px; }
+  .statusbar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel2); border-top: 1px solid var(--border); padding: 10px 20px; display: flex; gap: 24px; align-items: center; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; margin-right: 6px; }
+  .dot.on { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .muted { color: var(--muted); }
+  .actions { display: flex; gap: 8px; }
+  .stepform { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; padding: 10px; background: var(--panel2); border-radius: 8px; }
+  .picking { color: var(--orange); }
+  .empty { color: var(--muted); padding: 14px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🖱️ 自动点击器</h1>
+  <div class="sub">Web 控制 · 任务可循环 · 运行中随时按 <b>ESC</b> 急停 · 鼠标移到任意位置按 <b>F8</b> 捕获坐标 · 数据自动保存</div>
+
+  <div class="card">
+    <div class="toolbar">
+      <button class="primary" onclick="addTask()">＋ 新建任务</button>
+      <button onclick="exportTasks()">⬇ 导出任务</button>
+      <button onclick="document.getElementById('importFile').click()">⬆ 导入任务</button>
+      <input type="file" id="importFile" accept=".json" style="display:none" onchange="importTasks(this)">
+      <span class="muted">导入将覆盖当前全部任务</span>
+      <div style="flex:1"></div>
+      <span>实时坐标: <b id="livePos" style="color:var(--accent)">-, -</b></span>
+      <span>F8捕获: <b id="capPos" style="color:var(--orange)">未捕获</b></span>
+    </div>
+  </div>
+
+  <div id="taskList"></div>
+</div>
+
+<div class="statusbar">
+  <span><span class="dot" id="dot"></span><span id="stName">空闲</span></span>
+  <span id="stLoop" class="muted"></span>
+  <span id="stStep" class="muted"></span>
+  <span id="stMsg" class="muted"></span>
+  <button class="danger small" onclick="stopAll()">■ 停止</button>
+</div>
+
+<script>
+let tasks = [];
+let pickTarget = null; // 正在拾取坐标的 {taskId, stepIdx 或 null 表示新步骤}
+
+async function api(path, opts) {
+  try {
+    const r = await fetch(path, opts);
+    return r.json();
+  } catch (e) {
+    alert('连接后端失败！请确认已启动 autoclicker.exe，并用浏览器打开 http://127.0.0.1:8899（静态预览页面无法操作）');
+    throw e;
+  }
+}
+
+async function loadAll() {
+  tasks = await api('/api/tasks');
+  render();
+}
+
+function save() {
+  return api('/api/tasks', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(tasks) });
+}
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+function addTask() {
+  tasks.push({ id: uid(), name: '新任务', loop: 1, loopIntervalMs: 500, steps: [] });
+  save().then(render);
+}
+
+function delTask(id) {
+  if (!confirm('确定删除该任务？')) return;
+  tasks = tasks.filter(t => t.id !== id);
+  save().then(render);
+}
+
+function updTask(id, field, value, num) {
+  const t = tasks.find(t => t.id === id);
+  if (!t) return;
+  if (field === 'loopIntervalMs') {
+    t.loopIntervalMs = Math.round((parseFloat(value) || 0) * 1000);
+  } else {
+    t[field] = num ? (parseFloat(value) || 0) : value;
+  }
+  save();
+}
+
+// ---------- 步骤 ----------
+function addStep(id) {
+  const t = tasks.find(t => t.id === id);
+  const x = +(document.getElementById('nx-' + id).value || 0);
+  const y = +(document.getElementById('ny-' + id).value || 0);
+  const off = +(document.getElementById('noff-' + id).value || 0);
+  const click = document.getElementById('nclick-' + id).value;
+  const pause = (parseFloat(document.getElementById('npause-' + id).value) || 0) * 1000;
+  t.steps.push({ x, y, offset: off, click, pauseMs: pause });
+  save().then(render);
+}
+
+function delStep(id, i) {
+  tasks.find(t => t.id === id).steps.splice(i, 1);
+  save().then(render);
+}
+
+function moveStep(id, i, dir) {
+  const s = tasks.find(t => t.id === id).steps;
+  const j = i + dir;
+  if (j < 0 || j >= s.length) return;
+  [s[i], s[j]] = [s[j], s[i]];
+  save().then(render);
+}
+
+function updStep(id, i, field, value) {
+  const s = tasks.find(t => t.id === id).steps[i];
+  if (field === 'pauseMs') {
+    s.pauseMs = Math.round((parseFloat(value) || 0) * 1000); // 秒 → 毫秒
+  } else {
+    s[field] = field === 'click' ? value : (parseInt(value) || 0);
+  }
+  save();
+}
+
+// ---------- 拾取坐标 ----------
+function pickCoord(taskId, stepIdx, nx, ny) {
+  if (pickTarget) return alert('已经在拾取中了');
+  pickTarget = { taskId, stepIdx, nx, ny, deadline: Date.now() + 3000 };
+  const el = document.getElementById(nx);
+  el.classList.add('picking');
+  el.placeholder = '拾取中...';
+  const timer = setInterval(async () => {
+    const left = Math.ceil((pickTarget.deadline - Date.now()) / 1000);
+    if (left > 0) { el.placeholder = `${left} 秒后拾取，请把鼠标移到目标位置`; return; }
+    clearInterval(timer);
+    const pos = await api('/api/curpos');
+    if (!pickTarget) return;
+    const t = pickTarget; pickTarget = null;
+    el.classList.remove('picking');
+    el.placeholder = '';
+    if (t.stepIdx !== null && t.stepIdx !== undefined) {
+      tasks.find(x => x.id === t.taskId).steps[t.stepIdx].x = pos.x;
+      tasks.find(x => x.id === t.taskId).steps[t.stepIdx].y = pos.y;
+      save().then(render);
+    } else {
+      document.getElementById(t.nx).value = pos.x;
+      document.getElementById(t.ny).value = pos.y;
+    }
+  }, 200);
+}
+
+// ---------- F8 捕获 / 实时坐标 ----------
+let lastCap = null;
+
+setInterval(async () => {
+  try {
+    const p = await fetch('/api/curpos').then(r => r.json());
+    document.getElementById('livePos').textContent = p.x + ', ' + p.y;
+  } catch (e) {}
+}, 200);
+
+setInterval(async () => {
+  try {
+    const c = await fetch('/api/lastcap').then(r => r.json());
+    if (c.ts > 0) {
+      lastCap = c;
+      document.getElementById('capPos').textContent = c.x + ', ' + c.y;
+    }
+  } catch (e) {}
+}, 500);
+
+// 把 F8 捕获的坐标填进某个步骤
+function fillCap(taskId, stepIdx, nx, ny) {
+  if (!lastCap) return alert('还没有捕获过坐标，请先把鼠标移到目标位置按 F8');
+  if (stepIdx !== null && stepIdx !== undefined) {
+    const t = tasks.find(x => x.id === taskId);
+    t.steps[stepIdx].x = lastCap.x;
+    t.steps[stepIdx].y = lastCap.y;
+    save().then(render);
+  } else {
+    document.getElementById(nx).value = lastCap.x;
+    document.getElementById(ny).value = lastCap.y;
+  }
+}
+
+// ---------- 运行 ----------
+async function startTask(id) {
+  const r = await api('/api/start', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ id }) });
+  if (r.error) alert(r.error);
+}
+async function stopAll() { await api('/api/stop', { method: 'POST' }); }
+
+// ---------- 导出 / 导入 ----------
+function exportTasks() { window.open('/api/export'); }
+
+async function importTasks(input) {
+  const f = input.files[0];
+  if (!f) return;
+  if (!confirm('导入将覆盖当前全部任务，确定？')) { input.value = ''; return; }
+  const text = await f.text();
+  const r = await api('/api/import', { method: 'POST', headers: {'Content-Type':'application/json'}, body: text });
+  input.value = '';
+  if (r.error) return alert(r.error);
+  loadAll();
+}
+
+// ---------- 渲染 ----------
+const clickName = { left: '左键单击', double: '双击', right: '右键' };
+
+function render() {
+  const box = document.getElementById('taskList');
+  if (!tasks.length) { box.innerHTML = '<div class="card empty">还没有任务，点上面「新建任务」开始。</div>'; return; }
+  box.innerHTML = tasks.map(t => `
+    <div class="card">
+      <div class="task-head">
+        <input class="wide" value="${esc(t.name)}" onchange="updTask('${t.id}','name',this.value)">
+        <span class="tag">${t.steps.length} 个步骤</span>
+        <label>循环</label>
+        <input style="width:60px" type="number" min="0" value="${t.loop}" onchange="updTask('${t.id}','loop',this.value,true)" title="0 = 无限循环">
+        <label>轮间隔</label>
+        <input style="width:80px" type="number" min="0" step="0.1" value="${t.loopIntervalMs / 1000}" onchange="updTask('${t.id}','loopIntervalMs',this.value)">
+        <span class="muted">秒</span>
+        <div style="flex:1"></div>
+        <div class="actions">
+          <button class="primary" onclick="startTask('${t.id}')">▶ 开始</button>
+          <button class="danger" onclick="delTask('${t.id}')">删除</button>
+        </div>
+      </div>
+      ${t.steps.length ? `<table>
+        <tr><th>#</th><th>X</th><th>Y</th><th>偏移±</th><th>点击</th><th>点击后暂停(秒)</th><th>操作</th></tr>
+        ${t.steps.map((s, i) => `
+          <tr>
+            <td>${i + 1}</td>
+            <td><input type="number" value="${s.x}" onchange="updStep('${t.id}',${i},'x',this.value)"></td>
+            <td><input type="number" value="${s.y}" onchange="updStep('${t.id}',${i},'y',this.value)"></td>
+            <td><input type="number" value="${s.offset}" onchange="updStep('${t.id}',${i},'offset',this.value)"></td>
+            <td><select onchange="updStep('${t.id}',${i},'click',this.value)">
+              ${Object.entries(clickName).map(([k, v]) => `<option value="${k}" ${s.click === k ? 'selected' : ''}>${v}</option>`).join('')}
+            </select></td>
+            <td><input type="number" min="0" step="0.1" value="${s.pauseMs / 1000}" onchange="updStep('${t.id}',${i},'pauseMs',this.value)"></td>
+            <td class="actions">
+              <button class="small" onclick="pickCoord('${t.id}',${i},'','')" title="3秒后自动抓取鼠标位置">📍拾取</button>
+              <button class="small" onclick="fillCap('${t.id}',${i},'','')" title="填入 F8 捕获的坐标">📥 F8</button>
+              <button class="small" onclick="moveStep('${t.id}',${i},-1)">↑</button>
+              <button class="small" onclick="moveStep('${t.id}',${i},1)">↓</button>
+              <button class="small danger" onclick="delStep('${t.id}',${i})">删</button>
+            </td>
+          </tr>`).join('')}
+      </table>` : '<div class="empty">暂无步骤，在下面添加。</div>'}
+      <div class="stepform">
+        <b>添加步骤：</b>
+        <label>X</label><input id="nx-${t.id}" type="number" placeholder="0">
+        <label>Y</label><input id="ny-${t.id}" type="number" placeholder="0">
+        <button class="small" onclick="pickCoord('${t.id}',null,'nx-${t.id}','ny-${t.id}')">📍拾取坐标(3秒)</button>
+        <button class="small" onclick="fillCap('${t.id}',null,'nx-${t.id}','ny-${t.id}')" title="填入 F8 捕获的坐标">📥 填入F8捕获</button>
+        <label>偏移±</label><input id="noff-${t.id}" type="number" value="0">
+        <select id="nclick-${t.id}">${Object.entries(clickName).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select>
+        <label>暂停</label><input id="npause-${t.id}" type="number" min="0" step="0.1" value="0.5">
+        <span class="muted">秒</span>
+        <button class="primary small" onclick="addStep('${t.id}')">＋ 添加</button>
+      </div>
+    </div>`).join('');
+}
+
+function esc(s) { return String(s).replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
+
+// 状态轮询
+setInterval(async () => {
+  const s = await api('/api/status');
+  document.getElementById('dot').className = 'dot' + (s.running ? ' on' : '');
+  document.getElementById('stName').textContent = s.running ? `运行中: ${s.taskName}` : '空闲';
+  document.getElementById('stLoop').textContent = s.running ? `循环 ${s.loopNow}${s.loopTotal ? '/' + s.loopTotal : '/∞'}` : '';
+  document.getElementById('stStep').textContent = s.running ? `步骤 ${s.stepNow}/${s.stepTotal}` : '';
+  document.getElementById('stMsg').textContent = s.message || '';
+}, 500);
+
+loadAll();
+</script>
+</body>
+</html>
