@@ -330,13 +330,6 @@ func sleepInterruptible(d time.Duration) bool {
 }
 
 func runTask(task Task) {
-	setStatus(func(s *Status) {
-		s.Running = true
-		s.TaskID = task.ID
-		s.TaskName = task.Name
-		s.LoopTotal = task.Loop
-		s.StepTotal = len(task.Steps)
-	})
 	defer setStatus(func(s *Status) { s.Running = false; s.Message = "已停止" })
 
 	for loop := 1; task.Loop == 0 || loop <= task.Loop; loop++ {
@@ -404,11 +397,21 @@ func startTask(id string) error {
 	stopCh = make(chan struct{})
 	stopOnce = sync.Once{}
 	t := *found
+	status.Running = true
+	status.TaskID = t.ID
+	status.TaskName = t.Name
+	status.LoopTotal = t.Loop
+	status.StepTotal = len(t.Steps)
 	go runTask(t)
 	return nil
 }
 
 func stopTask() {
+	mu.Lock()
+	defer mu.Unlock()
+	if !status.Running || stopCh == nil {
+		return
+	}
 	stopOnce.Do(func() { close(stopCh) })
 }
 
