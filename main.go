@@ -293,7 +293,7 @@ var (
 	}()
 
 	mu       sync.Mutex
-	tasks    []Task
+	tasks    = []Task{}
 	status   Status
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -533,9 +533,17 @@ func main() {
 		writeJSON(w, map[string]bool{"ok": true})
 	})
 
-	fmt.Println("自动点击器已启动: http://127.0.0.1:8899")
 	fmt.Println("提示: 任务运行中随时按 ESC 键急停")
-	if err := http.ListenAndServe("127.0.0.1:8899", nil); err != nil {
-		fmt.Println("启动失败:", err)
+	addresses := []string{"127.0.0.1:8899", "127.0.0.1:8900"}
+	errCh := make(chan error, len(addresses))
+	for _, addr := range addresses {
+		addr := addr
+		go func() {
+			fmt.Println("自动点击器访问地址: http://" + addr)
+			errCh <- fmt.Errorf("%s: %w", addr, http.ListenAndServe(addr, nil))
+		}()
+	}
+	for range addresses {
+		fmt.Println("监听失败:", <-errCh)
 	}
 }

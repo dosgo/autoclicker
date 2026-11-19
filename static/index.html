@@ -80,13 +80,13 @@ async function api(path, opts) {
     const r = await fetch(path, opts);
     return r.json();
   } catch (e) {
-    alert('连接后端失败！请确认已启动 autoclicker.exe，并用浏览器打开 http://127.0.0.1:8899（静态预览页面无法操作）');
+    alert('连接后端失败！请确认已启动 autoclicker.exe，并用浏览器打开 http://127.0.0.1:8899 或 http://127.0.0.1:8900（静态预览页面无法操作）');
     throw e;
   }
 }
 
 async function loadAll() {
-  tasks = await api('/api/tasks');
+  tasks = (await api('/api/tasks')) || [];
   render();
 }
 
