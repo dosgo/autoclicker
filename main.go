@@ -334,6 +334,14 @@ func sleepInterruptible(d time.Duration) bool {
 func runTask(task Task) {
 	defer setStatus(func(s *Status) { s.Running = false; s.Message = "已停止" })
 
+	// 固定等待 5 秒倒计时，给用户时间切到目标窗口
+	for i := 5; i >= 1; i-- {
+		setStatus(func(s *Status) { s.Message = fmt.Sprintf("%d 秒后开始点击...", i) })
+		if !sleepInterruptible(time.Second) {
+			return
+		}
+	}
+
 	for loop := 1; task.Loop == 0 || loop <= task.Loop; loop++ {
 		setStatus(func(s *Status) { s.LoopNow = loop; s.Message = "运行中" })
 
